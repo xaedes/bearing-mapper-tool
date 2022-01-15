@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        html, body, svg {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+        }
+        svg
+        {
+            display: block;
+            position: absolute;
+           -webkit-user-select: none;
+           -moz-user-select: none;
+           -ms-user-select: none;
+           user-select: none;            
+        }
+        svg line 
+        {
+            stroke:  black;
+            stroke-width:  1;
+        }
+ 
+        svg .measurement line 
+        {
+            stroke-dasharray: 2;
+        }
+        
+        .roseNeedle path
+        {
+            stroke: none;
+        }
+        .roseNeedle path:nth-child(odd)
+        {
+            fill: #444;
+        }
+        .roseNeedle path:nth-child(even)
+        {
+            fill: lightgray;
+        }
+
+        .measureUiElement line:nth-child(odd)
+        {
+            stroke-width:  3;
+            stroke: rgba(0,0,0,0);
+        }
+
+        .measureUiElement:hover line:nth-child(odd)
+        {
+            stroke: red;
+        }
+
+        .measureUiElement line:nth-child(even)
+        {
+            /*stroke-width:  1;*/
+            display:  none;
+            stroke: red;
+            /*stroke: rgba(0,0,0,0);*/
+            stroke-dasharray: 2;
+        }
+
+        .measureUiElement:hover line:nth-child(even)
+        {
+            display:  inherit;
+            /*stroke: red;*/
+        }
+
+        .measureUiElement text
+        {
+            display:  none;
+        }
+
+        .measureUiElement:hover text
+        {
+            display:  inherit;
+        }
+
+    </style>
+    <script src="d3-7.2.1/package/dist/d3.js"></script>
+    <!-- <script src="https://d3js.org/d3.v7.min.js"></script> -->
+</head>
+    <body onload="main()">
+    <div id="container"></div>
+    <script>
+        /////////////////////////////////////////////////////////////
+        // Helper functions
+        /////////////////////////////////////////////////////////////
+        //<!--region-->
+        function range(start, stop) {
+            // https://stackoverflow.com/a/69900650/798588
+            return [...Array(stop - start)].map((_,i)=> start + i);
+        }
+
+        function range_step(start, stop, step) {
+            // https://stackoverflow.com/questions/3895478/does-javascript-have-a-method-like-range-to-generate-a-range-within-the-supp/69900650#comment117046127_3895478
+            return [...Array(Math.ceil((stop - start)/step))].map((_,i)=> start + i * step);
+        }
+
+        function array_difference(a, b)
+        {
+            return a.filter(x=>!b.includes(x));
+        }
+
+        function wrap360(a) {
+            let res = a % 360;
+            if (res < 0) res += 360;
+            return res;
+        }
+
+        function bearing_to_deg(bearing) {
+            return (270+bearing);
+        }
+
+        function bearing_to_rad(bearing) {
+            return bearing_to_deg(bearing)*Math.PI/180;
+        }
+
+        function get_alignment_baseline(bearing_, outside=true, margin=4) {
+            let bearing = wrap360(bearing_ + (outside ? 0 : 180));
+
+            return (
+                ((0 <= bearing) && (bearing < 90 - margin))         ? "baseline"  :
+                ((90-margin <= bearing) && (bearing < 90+margin))   ? "middle"   : 
+                ((90+margin <= bearing) && (bearing < 180))         ? "hanging"   :
+                ((180 <= bearing) && (bearing < 270-margin))        ? "hanging"   :
+                ((270-margin <= bearing) && (bearing < 270+margin)) ? "middle"   : 
+                ((270+margin <= bearing) && (bearing < 360))        ? "baseline" : 
+                "middle"
+            );
+        }
+
+        function get_text_anchor(bearing_, outside=true, margin=5) {
+            let bearing = wrap360(bearing_ + (outside ? 0 : 180));
+            return (
+                ((0+margin <= bearing) && (bearing < 180-margin))   ? "start" : 
+                ((180-margin <= bearing) && (bearing < 180+margin)) ? "middle" :
+                ((180+margin <= bearing) && (bearing < 360-margin)) ? "end"    :
+                "middle"
+            );
+        }
+        //<!--endregion-->
+        
+        /////////////////////////////////////////////////////////////
+        // Data Structures
+        /////////////////////////////////////////////////////////////
+        //<!--region-->
+
+        function Polygon(points)
+        {
+            this.points = points;
+
+            this.get_path = function ()
+            {
+                let path = d3.path();
+                path.moveTo(this.points[0][0], this.points[0][1]);
+                for (let i=1; i<this.points.length; ++i)
+                {
+                    path.lineTo(this.points[i][0], this.points[i][1]);
+                }
+                path.closePath();
+                return path;
+            }
+        }
+        function RoseNeedle(bearing, thickness, length)
+        {
+            this.bearing = bearing;
+            this.thickness = thickness;
+            this.length = length;
+            this.polygons = null;
+            this.update = function () {
+                this.polygons = [];
+                this.polygons.push(new Polygon([
+                    [0,0],
+                    [-this.thickness, -this.thickness],
+                    [0,-this.length]
+                ]));
+                this.polygons.push(new Polygon([
+                    [0,0],
+                    [+this.thickness, -this.thickness],
+                    [0,-this.length]
+                ]));
+                return this;
+            }
+            this.update();
+        }
+
+        function Rose(thickness=5, length=30, length2=20)
+        {
+            this.thickness = thickness;
+            this.length = length;
+            this.length2 = length2;
+            this.needles = null;
+            this.update = function () {
+                this.needles = [];
+                this.needles.push(new RoseNeedle(45,  thickness, length2));
+                this.needles.push(new RoseNeedle(135, thickness, length2));
+                this.needles.push(new RoseNeedle(225, thickness, length2));
+                this.needles.push(new RoseNeedle(315, thickness, length2));
+                this.needles.push(new RoseNeedle(0,   thickness, length));
+                this.needles.push(new RoseNeedle(90,  thickness, length));
+                this.needles.push(new RoseNeedle(180, thickness, length));
+                this.needles.push(new RoseNeedle(270, thickness, length));
+                return this;
+            }
+            this.update();
+        }
+
+        function Position(x=0, y=0)
+        {
+            this.x = x;
+            this.y = y;
+        }
+
+        function BearingLine(position, bearing, start_radius, end_radius)
+        {
+            this.position = position;
+            this.bearing = bearing;
+            this.start_radius = start_radius;
+            this.end_radius = end_radius;
+        }
+
+        function CircleAlignedText(text, center, bearing, radius, offset=null, outside=true, horizontal_middle_margin = 5, vertical_middle_margin = 4)
+        {
+            this.text = text;
+            this.center = center;
+            this.bearing = bearing;
+            this.radius = radius;
+            this.offset = (offset === null) ? new Position() : offset;
+            this.outside = outside;
+            this.horizontal_middle_margin = horizontal_middle_margin;
+            this.vertical_middle_margin = vertical_middle_margin;
+
+            this.get_alignment_baseline = function () {
+                return get_alignment_baseline(
+                    this.bearing, 
+                    this.outside, 
+                    this.vertical_middle_margin
+                );
+            }
+
+            this.get_text_anchor = function () {
+                return get_text_anchor(
+                    this.bearing, 
+                    this.outside, 
+                    this.horizontal_middle_margin
+                );
+            }
+        }
+        function MenuItem(text, customdata, onclick, bearing, radius)
+        {
+            this.bearing = bearing;
+            this.radius = radius;
+            this.text = text;
+            this.customdata = customdata;
+            this.onclick = onclick;
+
+            this.get_alignment_baseline = function () {
+                return get_alignment_baseline(
+                    this.bearing
+                );
+            }
+
+            this.get_text_anchor = function () {
+                return get_text_anchor(
+                    this.bearing
+                );
+            }
+        }
+        function Menu(position = null)
+        {
+            this.position = position || new Position(0,0);
+            this.items = []
+
+            this.circleLayout = function(radius=null) {
+
+                for (let i = 0; i < this.items.length; i++)
+                {
+                    let bearing = i*360.0/this.items.length;
+                    bearing = Math.round(bearing*10)/10;
+                    this.items[i].bearing = bearing;
+                    if (!(radius === null))
+                    {
+                        this.items[i].radius = radius;
+                    }
+                }
+            };
+
+        }
+        function BearingMeasurement(bearing, name=null, extend=100)
+        {
+            this.measurements = null;
+            this.bearing = bearing;
+            this.name = (name === null) ? `${this.bearing}` : name;
+            this.extend = extend;
+            this.ui_line = null;
+            this.ui_text = null;
+            this.ui_menu = null;
+            this.show_menu = false;
+
+            this.update = function () {
+                if (this.ui_line === null)
+                    this.ui_line = new BearingLine(new Position(0,0), this.bearing, 0, this.extend);
+                else
+                {
+                    this.ui_line.end_radius = this.extend;
+                    this.ui_line.bearing = this.bearing;
+                }
+
+                if (this.ui_text === null)
+                    this.ui_text = new CircleAlignedText(
+                        this.name,
+                        new Position(0,0),
+                        this.bearing,
+                        100
+                    );
+                else
+                {
+                    this.ui_text.text = this.name;
+                    this.ui_text.bearing = this.bearing;
+                }
+
+                if (this.ui_menu === null)
+                {
+                    this.ui_menu = new Menu();
+                    this.ui_menu.items.push(new MenuItem(
+                        "close", this, function(e,item,measurement){
+                            measurement.show_menu = false;
+                            return true;
+                        }
+                    ));
+                    this.ui_menu.items.push(new MenuItem(
+                        "shrink", this, function(e,item,measurement){
+                            let amount = Math.pow(10,Math.floor(Math.log10(measurement.extend)-1));
+                            measurement.extend -= amount;
+                            return true;
+                        }
+                    ));
+                    this.ui_menu.items.push(new MenuItem(
+                        "extend", this, function(e,item,measurement){
+                            let amount = Math.pow(10,Math.floor(Math.log10(measurement.extend)-1));
+                            measurement.extend += amount;
+                            return true;
+                        }
+                    ));
+                    this.ui_menu.items.push(new MenuItem(
+                        "delete", this, function(e,item,measurement){
+                            let index = measurement.measurements.bearings.findIndex(
+                                (item) => item == measurement
+                            );
+                            measurement.measurements.bearings.splice(index, 1);
+                            return true;
+                        }
+                    ));
+                    this.ui_menu.circleLayout(20);
+                }
+                return this;
+            };
+
+            this.update();
+        }
+        
+        function DragArea(target, type, data, ondrag = null)
+        {
+            this.target = target;
+            this.type = type;
+            this.data = data;
+            this.ondrag = ondrag;
+        }
+
+        function BearingMeasureUiElement(measureUi, bearing)
+        {
+            this.measureUi = measureUi;
+            this.bearing = bearing;
+
+            this.lines = null;
+            this.text = null;
+
+            this.get_label = function()
+            {
+                return "" + this.bearing;
+            }
+
+            this.update = function()
+            {
+                if (this.lines === null)
+                {
+                    this.lines = []
+                    this.lines.push(new BearingLine(
+                        new Position(0,0), 
+                        this.bearing,
+                        this.measureUi.innerRadius,
+                        this.measureUi.outerRadius
+                    ));
+                    this.lines.push(new BearingLine(
+                        new Position(0,0), 
+                        this.bearing,
+                        0,
+                        this.measureUi.innerRadius
+                    ));
+                }
+                else
+                {
+                    this.line.bearing = this.bearing;
+                    this.line.start_radius = this.innerRadius;
+                    this.line.end_radius = this.outerRadius;
+                }
+                if (this.text === null)
+                {
+                    let offset = null;
+                    let outside = false;
+                    let radius = (
+                        outside 
+                        ? (this.measureUi.outerRadius + this.measureUi.textMargin)
+                        : (this.measureUi.innerRadius - this.measureUi.textMargin)
+                    );
+                    this.text = new CircleAlignedText(
+                        this.get_label(),
+                        new Position(0,0), 
+                        this.bearing,
+                        radius,
+                        offset,
+                        outside
+                    );
+                }
+                else
+                {
+                    this.text.text = this.get_label();
+                    this.text.bearing = this.bearing;
+                    this.text.radius = this.measureUi.outerRadius + this.measureUi.textMargin;
+                }
+                return this;
+            };
+            this.update();
+        }
+
+        function BearingMeasureUi(measurements, innerRadius = 150, outerRadius = 165, textMargin=10)
+        {
+            this.measurements = measurements;
+            this.innerRadius = innerRadius;
+            this.outerRadius = outerRadius;
+            this.textMargin = textMargin;
+
+            this.ticks = range(0, 360).map(tick => new BearingMeasureUiElement(
+                this, tick
+            ));
+
+        }
+
+        function MinimizeMaximizeButton(subject, minimized = false)
+        {
+            this.subject = subject;
+            this.minimized = minimized;
+
+            this.get_label = function() { 
+                this.minimized ? "+" : "-"
+            };
+            this.minimize = function() {
+                this.subject.minimize();
+            }
+            this.maximize = function() {
+                this.subject.maximize();
+            }
+        }
+
+        function BearingMeasurements(map, position, bearings, showCompass=true, showMeasureUi=true)
+        {
+            this.map = map;
+            this.position = position;
+            this.bearings = bearings;
+            for (let i = 0; i < this.bearings.length; i++)
+            {
+                this.bearings[i].measurements = this;
+            }
+            this.dragArea = new DragArea(
+                this,
+                Rose,
+                [new Rose()]
+            );
+            // this.rose = new Rose();
+            // this.rose.parent = this;
+            this.measureUi = new BearingMeasureUi(this);
+            this.showCompass = showCompass;
+            this.showMeasureUi = showMeasureUi;
+            this.minimizeMaximizeButton = new MinimizeMaximizeButton(this);
+
+            this.minimize = function()
+            {
+                this.showCompass = false;
+                this.showMeasureUi = false;
+            };
+            this.maximize = function()
+            {
+                this.showCompass = true;
+                this.showMeasureUi = true;
+            };
+            // this.minimizeMaximizeButton = new MinimizeMaximizeButton(()=>this.minimize(), ()=>this.maximize());
+        }
+
+        function CompassScale(innerRadius = 150, outerRadius = 165, textMargin=10)
+        {
+            this.innerRadius = innerRadius;
+            this.outerRadius = outerRadius;
+            this.textMargin = textMargin;
+
+            this.majorTicks = range_step(0, 360, 10);
+            this.mediumTicks = range_step(5, 360, 10);
+            this.minorTicks = array_difference(
+                range(0, 360),
+                range_step(0, 360, 5)
+            );
+
+            this.lines = null;
+            this.texts = null;
+
+            this.update = function ()
+            {
+                if (!(this.lines === null))
+                {
+                    return this;
+                }
+                let majorTickLength = this.outerRadius-this.innerRadius;
+                let mediumTickLength = majorTickLength * 0.75;
+                let minorTickLength = majorTickLength * 0.5;
+                this.lines = [];
+                this.texts = [];
+                for (let i=0; i<this.minorTicks.length; ++i)
+                {
+                    this.lines.push(new BearingLine(
+                        new Position(0,0), 
+                        this.minorTicks[i],
+                        this.innerRadius,
+                        this.innerRadius + minorTickLength
+                    ));
+                }
+                for (let i=0; i<this.mediumTicks.length; ++i)
+                {
+                    this.lines.push(new BearingLine(
+                        new Position(0,0), 
+                        this.mediumTicks[i],
+                        this.innerRadius,
+                        this.innerRadius + mediumTickLength
+                    ));
+                }
+                for (let i=0; i<this.majorTicks.length; ++i)
+                {
+                    this.lines.push(new BearingLine(
+                        new Position(0,0), 
+                        this.majorTicks[i],
+                        this.innerRadius,
+                        this.innerRadius + majorTickLength
+                    ));
+                    this.texts.push(new CircleAlignedText(
+                        "" + this.majorTicks[i],
+                        new Position(0,0),
+                        this.majorTicks[i],
+                        this.outerRadius + this.textMargin
+                    ));
+                }
+                return this;
+            };
+
+            this.update();
+
+        }
+
+        function Compass(map, position)
+        {
+            this.map = map;
+            this.position = position;
+            // this.rose = new Rose();
+            this.scale = new CompassScale();
+        }
+
+        function Map(cartographer)
+        {
+            this.cartographer = cartographer;
+            this.measurements = [];
+            this.compass = new Compass(this, new Position());
+        }
+
+        function Notebook(cartographer)
+        {
+            this.cartographer = cartographer;
+            this.map = new Map(this.cartographer);
+        }
+
+        function Cartographer(position)
+        {
+            this.position = position;
+            this.notebook = new Notebook(this);
+        }
+
+        function World(cartographer)
+        {
+            this.cartographer = cartographer;
+        }
+
+        function Camera(position, world)
+        {
+            this.position = position; // top-left
+            this.world = world;
+        }
+
+        function Application(type, parent, data)
+        {
+            this.type = type;
+            this.parent = parent;
+            this.data = data;
+            this.initial_data = data;
+
+            this.update = function()
+            {
+                this.store();
+                return this.type.Join(this.parent, this.data);
+            };
+
+            this.serialize = function()
+            {
+                return this.data.map(this.type.Serialize);
+            };
+
+            this.deserialize = function(data)
+            {
+                this.data = data.map(this.type.Deserialize);
+                this.update();
+            };
+
+            this.store = function()
+            {
+                localStorage.setItem("data", JSON.stringify(this.serialize()));
+            };
+
+            this.load = function()
+            {
+                let data = JSON.parse(localStorage.getItem("data"));
+                if (data) this.deserialize(data);
+            };
+
+            this.clear = function()
+            {
+                this.data = this.initial_data;
+                this.update();
+            };
+
+            this.load();
+        }
+        //<!--endregion-->
+
+        /////////////////////////////////////////////////////////////
+        // Data serialization and deserialization functions
+        /////////////////////////////////////////////////////////////
+        //<!--region-->
+        Position.Serialize = function(data)
+        {
+            return {
+                x: data.x,
+                y: data.y
+            };
+        }
+        Position.Deserialize = function(data)
+        {
+            return new Position(data.x, data.y);
+        }
+
+        BearingMeasurement.Serialize = function(data)
+        {
+            return {
+                bearing: data.bearing,
+                name: data.name,
+                extend: data.extend,
+                show_menu: data.show_menu
+            };
+        }
+        BearingMeasurement.Deserialize = function(data)
+        {
+            let result = new BearingMeasurement(
+                data.bearing,
+                data.name,
+                data.extend,
+            );
+            result.show_menu = data.show_menu;
+            return result;
+        }
+        BearingMeasurements.Serialize = function(data)
+        {
+            return {
+                position: Position.Serialize(data.position),
+                bearings: data.bearings.map(BearingMeasurement.Serialize),
+                showCompass: data.showCompass,
+                showMeasureUi: data.showMeasureUi
+            };
+        }
+        BearingMeasurements.Deserialize = function(data, map = null)
+        {
+            let result = new BearingMeasurements(
+                map,
+                Position.Deserialize(data.position),
+                data.bearings.map(BearingMeasurement.Deserialize),
+                data.showCompass,
+                data.showMeasureUi,
+            );
+            return result;
+        }
+        Map.Serialize = function(data)
+        {
+            return {
+                measurements: data.measurements.map(BearingMeasurements.Serialize)
+            };
+        }
+        Map.Deserialize = function(data, cartographer = null)
+        {
+            let result = new Map(
+                cartographer
+            );
+            result.measurements = data.measurements.map(
+                (x) => BearingMeasurements.Deserialize(x, result)
+            );
+            return result;
+        }
+        Notebook.Serialize = function(data)
+        {
+            return {
+                map: Map.Serialize(data.map)
+            };
+        }
+        Notebook.Deserialize = function(data, cartographer = null)
+        {
+            let result = new Notebook(
+                cartographer
+            );
+            result.map = Map.Deserialize(data.map, cartographer)
+            return result;
+        }
+        Cartographer.Serialize = function(data)
+        {
+            return {
+                position: Position.Serialize(data.position),
+                notebook: Notebook.Serialize(data.notebook)
+            };
+        }
+        Cartographer.Deserialize = function(data)
+        {
+            let result = new Cartographer(
+                Position.Deserialize(data.position),
+            );
+            result.notebook = Notebook.Deserialize(
+                data.notebook,
+                result
+            )
+            return result;
+        }
+        World.Serialize = function(data)
+        {
+            return {
+                cartographer: Cartographer.Serialize(data.cartographer)
+            };
+        }
+        World.Deserialize = function(data)
+        {
+            let result = new World(
+                Cartographer.Deserialize(
+                    data.cartographer
+                )
+            );
+            return result;
+        }
+        //<!--endregion-->
+        
+        
+        /////////////////////////////////////////////////////////////
+        // DOM and Data Join functions, i.e. DOM updaters
+        /////////////////////////////////////////////////////////////
+        //<!--region-->
+
+        Polygon.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("path.polygon")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("path")
+                            .attr("class", "polygon")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "d", 
+                    d=>d.get_path()
+                )
+            );
+            return join;
+        }
+        RoseNeedle.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("g.roseNeedle")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "roseNeedle")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "transform", 
+                    d=>"rotate("+bearing_to_deg(-d.bearing)+")"
+                )
+            );
+            Polygon.Join(join, d=>d.polygons);
+            return join;
+        }
+        Rose.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("g.rose")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "rose")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            RoseNeedle.Join(join, d=>d.needles);
+            return join;
+        }
+        BearingLine.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("line.bearingLine")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("line")
+                            .attr("class", "bearingLine")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr("x1", d => Math.cos(bearing_to_rad(d.bearing)) * d.start_radius)
+                .attr("y1", d => Math.sin(bearing_to_rad(d.bearing)) * d.start_radius)
+                .attr("x2", d => Math.cos(bearing_to_rad(d.bearing)) * d.end_radius)
+                .attr("y2", d => Math.sin(bearing_to_rad(d.bearing)) * d.end_radius)
+            );
+            return join;
+        }
+        CircleAlignedText.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("text.circleAlignedText")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("text")
+                            .attr("class", "circleAlignedText")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr("x", d => d.center.x + Math.cos(bearing_to_rad(d.bearing)) * d.radius + d.offset.x)
+                .attr("y", d => d.center.y + Math.sin(bearing_to_rad(d.bearing)) * d.radius + d.offset.y)
+                .text(d => d.text)
+                .attr("alignment-baseline", d => d.get_alignment_baseline())
+                .attr("text-anchor", d => d.get_text_anchor())
+            );
+            return join;
+        }
+        MenuItem.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("text.menuItem")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("text")
+                            .attr("class", "menuItem")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr("x", d => Math.cos(bearing_to_rad(d.bearing)) * d.radius)
+                .attr("y", d => Math.sin(bearing_to_rad(d.bearing)) * d.radius)
+                .text(d => d.text)
+                .attr("alignment-baseline", d => d.get_alignment_baseline())
+                .attr("text-anchor", d => d.get_text_anchor())
+                .on("click", function(e,d){
+                    if (d.onclick(e,d,d.customdata))
+                    {
+                        application.update();
+                    }
+                })
+            );
+            return join;
+        }
+        Menu.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll("g.menu")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "menu")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr("transform", d => `translate(${d.position.x} ${d.position.y})`)
+            
+            );
+            MenuItem.Join(join, d=>d.items);
+            return join;
+        }
+        BearingMeasurement.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".measurement")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "measurement")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .on("click", function(e,d){
+                    d.extend = (d.extend == 100) ? (1000) : 100;
+                    // let index = d.measurements.bearings.findIndex((item) => item == d);
+                    // d.measurements.bearings.splice(index, 1);
+                    application.update();
+                    // console.log(arguments);
+                })
+                .on("mouseup", function(e,d){
+                    console.log(arguments);
+                    if (e.button == 1)
+                    {
+                        // d.ui_menu.position.x = (e.pageX - d.measurements.position.x);
+                        // d.ui_menu.position.y = (e.pageY - d.measurements.position.y);
+                        d.show_menu = !d.show_menu;
+                        // middlemouse button click
+                        // let index = d.measurements.bearings.findIndex((item) => item == d);
+                        // d.measurements.bearings.splice(index, 1);
+                        application.update();
+                    }
+                    // d.extend = (d.extend == 100) ? (1000) : 100;
+                    // application.update();
+                    // console.log(arguments);
+                })
+            );
+            BearingLine.Join(join, d=>[d.ui_line]);
+            CircleAlignedText.Join(join, d=>[d.ui_text]);
+            Menu.Join(join, d=>d.show_menu ? [d.ui_menu] : []);
+            return join;
+        }
+        DragArea.Join = function(parent, data, subjects)
+        {
+            let join = (parent
+                .selectAll(".dragArea")
+                .data(data)
+                .join(
+                    function(enter){
+                        let drag_offsetx = null;
+                        let drag_offsety = null;
+                        return enter
+                            .append("g")
+                            .attr("class", "dragArea")
+                            .call(d3.drag()
+                                .on("start", function(e,d){
+                                    d._drag_offsetx = d.target.position.x - e.x;
+                                    d._drag_offsety = d.target.position.y - e.y;
+                                })
+                                .on("drag", function(e,d){
+                                    console.log(e);
+                                    if (d._drag_offsetx === null || d._drag_offsety === null)
+                                        return;
+                                    d.target.position.x = e.x + (d._drag_offsetx || 0);
+                                    d.target.position.y = e.y + (d._drag_offsety || 0);
+
+                                    d3.select(this)
+                                    .attr(
+                                        "transform", 
+                                        d=>`translate(${d.target.position.x} ${d.target.position.y})`
+                                    );
+                                    d3.selectAll(subjects)
+                                    .attr(
+                                        "transform", 
+                                        // d=>`translate(${d.target.position.x} ${d.target.position.y})`
+                                        d=>`translate(${d.position.x} ${d.position.y})`
+                                    );
+                                })
+                                .on("end", function(e,d){
+                                    
+                                })
+                            )
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "transform", 
+                    d=>`translate(${d.target.position.x} ${d.target.position.y})`
+                )         
+            );
+            join.each(function(d,i,groups)
+            {
+                d.type.Join(d3.select(groups[i]), d=>d.data);
+            });
+            return join;
+        }
+        MinimizeMaximizeButton.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".minimizeMaximizeButton")
+                .data(data)
+                .join(
+                    function(enter){
+                        let res = enter
+                            .append("circle")
+                            .attr("class", "minimizeMaximizeButton")
+                            .attr("x", 0)
+                            .attr("y", 0)
+                            .attr("r", 5)
+                            .on("click", function(e,d){
+                                d.minimized = !d.minimized;
+                                if (d.minimized){
+                                    d.minimize();
+                                } else {
+                                    d.maximize();
+                                }
+
+                                application.update();
+                            });
+                        return res;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            return join;
+        }
+        BearingMeasurements.Join = function(parent, data)
+        {
+            DragArea.Join(parent, d=>data(d).map(x=>x.dragArea), ".measurements")
+                .on("click", function(e,d){
+                    let measurements = d.target;
+                    measurements.showCompass = !measurements.showCompass;
+                    measurements.showMeasureUi = !measurements.showMeasureUi;
+                    application.update();
+                })
+                ;
+            let drag_offsetx = null;
+            let drag_offsety = null;
+            let drag_start_ex = null;
+            let drag_start_ey = null;
+            let join = (parent
+                .selectAll(".measurements")
+                .data(data)
+                .join(
+                    function(enter){
+                        let res = enter
+                            .append("g")
+                            .attr("class", "measurements")
+                        ;
+
+                        // res
+                        //     .append("circle")
+                        //     .attr("cx", 0)
+                        //     .attr("cy", 0)
+                        //     .attr("r", 5)
+                        //     .style("fill", "black")
+
+
+                        return res;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "transform", 
+                    d=>`translate(${d.position.x} ${d.position.y})`
+                )
+            );
+
+            BearingMeasurement.Join(join, d=>d.bearings.map(x => x.update()));
+            // MinimizeMaximizeButton.Join(join, d=>[d.minimizeMaximizeButton]);
+            Compass.Join(join, d=>d.showCompass ? [d.map.compass] : []);            
+            BearingMeasureUi.Join(join, d=>d.showMeasureUi ? [d.measureUi] : []);
+            // DragArea.Join(parent, d=>data(d).map(x=>x.dragArea), ".measurements");
+            // parent
+            //     .selectAll(".measurementsControls")
+            //     .data(data)
+            //     .join(
+            //         function(enter){
+            //             return enter
+            //                 .append("circle")
+            //                 .attr("class", "measurementsControls")
+            //                 .attr("cx", d=>d.position.x)
+            //                 .attr("cy", d=>d.position.y)
+            //                 .attr("radius", 10)
+            //             ;
+            //         },
+            //         function(update){
+            //             return update;
+            //         }
+            //     )
+            //     ;
+            return join;
+        }
+        BearingMeasureUiElement.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".measureUiElement")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "measureUiElement")
+                            .on("click", function(e,d){
+                                let bearings = d.measureUi.measurements.bearings;
+                                for (let i = 0; i < bearings.length; i++)
+                                {
+                                    if (bearings[i].bearing == d.bearing)
+                                    {
+                                        return;
+                                    }
+                                }
+                                let measurement = new BearingMeasurement(
+                                    d.bearing
+                                );
+                                measurement.measurements = d.measureUi.measurements;
+                                bearings.push(measurement);
+                                application.update();
+                            })
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            BearingLine.Join(join, d=>d.lines);
+            CircleAlignedText.Join(join, d=>[d.text]);
+            return join;
+        }
+        BearingMeasureUi.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".measureUi")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "measureUi")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            BearingMeasureUiElement.Join(join, d=>d.ticks);
+            return join;
+        }
+        CompassScale.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".compassScale")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "compassScale")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            BearingLine.Join(join, d=>d.lines);
+            CircleAlignedText.Join(join, d=>d.texts);
+            return join;
+        }
+        Compass.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".compass")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "compass")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "transform", 
+                    d=>`translate(${d.position.x} ${d.position.y})`
+                )
+            );
+            // Rose.Join(join, d=>[d.rose.update()]);
+            CompassScale.Join(join, d=>[d.scale.update()]);
+            return join;
+        }
+        Map.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".map")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "map")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            // Compass.Join(join, d=>[d.compass]);
+            BearingMeasurements.Join(join, d=>d.measurements);
+            return join;
+        }
+        Notebook.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".notebook")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "notebook")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            Map.Join(join, d=>[d.map]);
+            return join;
+        }
+        Cartographer.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".cartographer")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "cartographer")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "transform", 
+                    d=>`translate(${d.position.x} ${d.position.y})`
+                )
+            );
+            Notebook.Join(join, d=>[d.notebook]);
+            return join;
+        }
+        World.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".world")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "world")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+            );
+            Cartographer.Join(join, d=>[d.cartographer]);
+            return join;
+        }
+        Camera.Join = function(parent, data)
+        {
+            let join = (parent
+                .selectAll(".camera")
+                .data(data)
+                .join(
+                    function(enter){
+                        return enter
+                            .append("g")
+                            .attr("class", "camera")
+                            .call(d3.zoom().on("zoom", e=> {
+                                d3.selectAll("")
+                            }))
+                            .append("g")
+                            .attr("class", "cameraContent")
+                        ;
+                    },
+                    function(update){
+                        return update;
+                    }
+                )
+                .attr(
+                    "transform", 
+                    d=>`translate(${-d.position.x} ${-d.position.y})`
+                )
+            );
+            const zoom = d3.zoom().on("zoom", e=>{
+                cam.attr("transform", (transform = e.transform))
+            });
+            svg.call(d3.zoom().on("zoom", e=>{
+                cam.attr("transform", (transform = e.transform))
+            }));
+
+            World.Join(join, d=>[d.world]);
+            return join;
+        }
+        //<!--endregion-->
+
+        /////////////////////////////////////////////////////////////
+        // Define Data
+        /////////////////////////////////////////////////////////////
+        //<!--region-->
+
+        var cartographer = new Cartographer(new Position());
+        var world = new World(cartographer);
+        var world2 = new World(cartographer);
+        var data = [world,world2];
+        // cartographer.notebook.map.measurements.push(
+        //     new BearingMeasurements(
+        //         cartographer.notebook.map,
+        //         new Position(200,200), [
+        //             new BearingMeasurement(40),
+        //             new BearingMeasurement(90),
+        //             new BearingMeasurement(150),
+        //         ],
+        //         true
+        //     )
+        // );
+        // cartographer.notebook.map.measurements.push(
+        //     new BearingMeasurements(
+        //         cartographer.notebook.map,
+        //         new Position(600,200), [
+        //             new BearingMeasurement(270),
+        //             new BearingMeasurement(5),
+        //             new BearingMeasurement(10),
+        //         ]
+        //     )
+        // );
+        let positions = [
+            [400,400],
+            [800,400],
+            [1200,400],
+            [400,800],
+            [800,800],
+            [1200,800],
+            [400,1200],
+            [800,1200],
+            [1200,1200],
+            [1600-400+400,400],
+            [1600-400+800,400],
+            [1600-400+1200,400],
+            [1600-400+400,800],
+            [1600-400+800,800],
+            [1600-400+1200,800],
+            [1600-400+400,1200],
+            [1600-400+800,1200],
+            [1600-400+1200,1200],
+        ];
+        for (let i=0; i<positions.length; i++)
+        {
+            cartographer.notebook.map.measurements.push(
+                new BearingMeasurements(
+                    cartographer.notebook.map,
+                    new Position(positions[i][0],positions[i][1]), 
+                    []
+                )
+            );
+        }
+        // cartographer.notebook.map.compass.position.x = 200;
+        // cartographer.notebook.map.compass.position.y = 200;
+        var camera = new Camera(new Position(0,0), world);
+        var application = null;
+        //<!--endregion-->
+
+        /////////////////////////////////////////////////////////////
+        // function main
+        /////////////////////////////////////////////////////////////
+        //<!--region-->
+
+        function main() 
+        {
+
+            var svg = d3.select("#container").append("svg");
+            var cam = svg.append("g").attr("class", "cam");
+            const zoom = d3.zoom().on("zoom", e=>{
+                cam.attr("transform", (transform = e.transform))
+            });
+            svg.call(zoom);
+            application = new Application(World, cam, [world]);
+            // application = new Application(Camera, svg, [cam]);
+            application.update();
+
+            setInterval(function(){
+                application.store();
+            }, 200);
+
+            // let stranded_deep = '[{"cartographer":{"position":{"x":0,"y":0},"notebook":{"map":{"measurements":[{"position":{"x":522.650146484375,"y":263.22483825683594},"bearings":[{"bearing":20,"name":"20","extend":100,"show_menu":false},{"bearing":40,"name":"40","extend":100,"show_menu":false},{"bearing":70,"name":"70","extend":100,"show_menu":false},{"bearing":110,"name":"110","extend":100,"show_menu":false},{"bearing":190,"name":"190","extend":1000,"show_menu":false},{"bearing":290,"name":"290","extend":100,"show_menu":false}],"showCompass":true,"showMeasureUi":true},{"position":{"x":190.60682678222656,"y":144.60621643066406},"bearings":[{"bearing":108,"name":"108","extend":100,"show_menu":false},{"bearing":44,"name":"44","extend":100,"show_menu":false},{"bearing":224,"name":"224","extend":100,"show_menu":false},{"bearing":70,"name":"70","extend":100,"show_menu":false},{"bearing":320,"name":"320","extend":100,"show_menu":false},{"bearing":290,"name":"290","extend":100,"show_menu":false},{"bearing":202,"name":"202","extend":1000,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":-208.23619079589844,"y":-4.7548017501831055},"bearings":[{"bearing":110,"name":"110","extend":100,"show_menu":false},{"bearing":160,"name":"160","extend":100,"show_menu":false},{"bearing":352,"name":"352","extend":100,"show_menu":false},{"bearing":262,"name":"262","extend":100,"show_menu":false},{"bearing":238,"name":"238","extend":100,"show_menu":false},{"bearing":202,"name":"202","extend":100,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":428.3724060058594,"y":794.8218994140625},"bearings":[{"bearing":10,"name":"10","extend":100,"show_menu":false},{"bearing":275,"name":"275","extend":1000,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":-56.360637187957764,"y":753.157470703125},"bearings":[{"bearing":95,"name":"95","extend":100,"show_menu":false},{"bearing":0,"name":"0","extend":1000,"show_menu":false},{"bearing":300,"name":"300","extend":1000,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":1038.719970703125,"y":451.5860900878906},"bearings":[{"bearing":290,"name":"290","extend":1000,"show_menu":false},{"bearing":310,"name":"310","extend":100,"show_menu":false},{"bearing":10,"name":"10","extend":100,"show_menu":false},{"bearing":50,"name":"50","extend":100,"show_menu":false},{"bearing":88,"name":"88","extend":100,"show_menu":false},{"bearing":124,"name":"124","extend":100,"show_menu":false},{"bearing":151,"name":"151","extend":100,"show_menu":false},{"bearing":194,"name":"194","extend":100,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":-413.8434143066406,"y":545.7937622070312},"bearings":[{"bearing":120,"name":"120","extend":100,"show_menu":false},{"bearing":68,"name":"68","extend":1000,"show_menu":false},{"bearing":20,"name":"20","extend":100,"show_menu":false},{"bearing":338,"name":"338","extend":100,"show_menu":false},{"bearing":290,"name":"290","extend":100,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":-56.54243087768555,"y":400.62701416015625},"bearings":[{"bearing":180,"name":"180","extend":1000,"show_menu":false},{"bearing":340,"name":"340","extend":100,"show_menu":false},{"bearing":310,"name":"310","extend":100,"show_menu":false},{"bearing":270,"name":"270","extend":100,"show_menu":false},{"bearing":248,"name":"248","extend":100,"show_menu":false},{"bearing":44,"name":"44","extend":1000,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":923.9812622070312,"y":910.6437377929688},"bearings":[{"bearing":210,"name":"210","extend":100,"show_menu":false},{"bearing":164,"name":"164","extend":1000,"show_menu":false},{"bearing":130,"name":"130","extend":1000,"show_menu":false},{"bearing":60,"name":"60","extend":100,"show_menu":false},{"bearing":14,"name":"14","extend":1000,"show_menu":false}],"showCompass":false,"showMeasureUi":false},{"position":{"x":723.4251708984375,"y":1259.3387756347656},"bearings":[],"showCompass":false,"showMeasureUi":false},{"position":{"x":2000,"y":400},"bearings":[],"showCompass":true,"showMeasureUi":true},{"position":{"x":2400,"y":400},"bearings":[],"showCompass":true,"showMeasureUi":true},{"position":{"x":1090,"y":1488},"bearings":[],"showCompass":false,"showMeasureUi":false},{"position":{"x":2000,"y":800},"bearings":[],"showCompass":true,"showMeasureUi":true},{"position":{"x":2400,"y":800},"bearings":[],"showCompass":true,"showMeasureUi":true},{"position":{"x":1250.1024169921875,"y":1184.34716796875},"bearings":[{"bearing":310,"name":"310","extend":100,"show_menu":false},{"bearing":1,"name":"1","extend":100,"show_menu":false},{"bearing":208,"name":"208","extend":1000,"show_menu":false},{"bearing":262,"name":"262","extend":100,"show_menu":false},{"bearing":40,"name":"40","extend":100,"show_menu":false},{"bearing":230,"name":"230","extend":100,"show_menu":false}],"showCompass":true,"showMeasureUi":true},{"position":{"x":2000,"y":1200},"bearings":[],"showCompass":true,"showMeasureUi":true},{"position":{"x":2400,"y":1200},"bearings":[],"showCompass":true,"showMeasureUi":true}]}}}}]';
+            // application.deserialize(JSON.parse(stranded_deep));
+        }
+        //<!--endregion-->
+    </script>
+    </body>
+</html>
